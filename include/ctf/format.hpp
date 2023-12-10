@@ -10,6 +10,7 @@
 
 #include "format_error.hpp"
 #include "formatter.hpp"
+#include "formatter_string.hpp"
 #include "parse.hpp"
 #include "tuple.hpp"
 #include "utility.hpp"

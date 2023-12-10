@@ -185,6 +185,11 @@ auto consteval parse_arg_id_manual() {
             number.offset, std::size_t(-1),
             arg_id_status<index_mode::manual, status.index, status.count>{}>{};
 
+      else if constexpr (fmt.text[offset] == '0' && number.offset != offset + 1)
+        return ctf::create_format_error(
+            "the argument index has a leading zero ", std::string(fmt.text),
+            offset, offset + 1, number.offset - 1);
+
       else if constexpr (number.value >= status.count)
         return create_format_error_arg_id_out_of_bounds(
             std::string(fmt.text), number.value, status.count, offset,

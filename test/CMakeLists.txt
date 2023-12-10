@@ -1,5 +1,5 @@
 add_executable(unittest)
-target_sources(unittest PRIVATE format.cpp main.cpp valid.cpp)
+target_sources(unittest PRIVATE format.cpp main.cpp string_view.cpp valid.cpp)
 target_link_libraries(unittest PRIVATE ctf ut)
 
 # Uses Clang's verify to validate the expected compiler diagnostics.
