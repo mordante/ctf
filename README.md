@@ -21,6 +21,69 @@ taken and hopefully find some additional improvements for libc++'s
 ``std::format`` implementation.
 
 
+Features
+--------
+
+### Improved execution speed
+
+See the benchmarks at the end of the page.
+
+### Improved diagnostics
+
+Part of the parsing engine have been rewritten to allow better diagnostics. For example:
+
+```
+In file included from …/test/diagnostics.cpp:12:
+…/include/ctf/format.hpp:553:19: error: static assertion failed due to requirement '!"parse error"':
+using the second argument while one argument is available
+{1}
+ ~^
+
+  553 |     static_assert(!"parse error", status);
+      |                   ^~~~~~~~~~~~~~
+…/test/diagnostics.cpp:65:14: note: in instantiation of function template specialization 'ctf::format<fixed_string<4UL>{"{1}"}, int>' requested here
+   65 |   (void)ctf::format<"{1}">(42);
+      |              ^
+```
+
+Instead of libc++'s error messages:
+
+```
+…/test/diagnostics.cpp:66:21: error: call to consteval function 'std::basic_format_string<char, int>::basic_format_string<char[4]>' is not a constant expression
+   66 |   (void)std::format("{1}", 42);
+      |                     ^
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_parse_context.h:91:7: note: non-constexpr function '__throw_format_error' cannot be used in a constant expression
+   91 |       std::__throw_format_error("Argument index outside the valid range");
+      |       ^
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_string.h:80:3: note: in call to '__parse_ctx.check_arg_id(1)'
+   80 |   __parse_ctx.check_arg_id(__r.__value);
+      |   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_string.h:159:10: note: in call to '__parse_manual<const char *, std::basic_format_parse_context<char>>(&"{1}"[1], &"{1}"[3], basic_format_parse_context<char>{this->__str_, sizeof...(_Args)})'
+  159 |   return __detail::__parse_manual(__begin, __end, __parse_ctx);
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_functions.h:246:41: note: in call to '__parse_arg_id<const char *, std::basic_format_parse_context<char>>(&"{1}"[1], &"{1}"[3], basic_format_parse_context<char>{this->__str_, sizeof...(_Args)})'
+  246 |   __format::__parse_number_result __r = __format::__parse_arg_id(__begin, __end, __parse_ctx);
+      |                                         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_functions.h:315:13: note: in call to '__handle_replacement_field<const char *, std::basic_format_parse_context<char>, std::__format::__compile_time_basic_format_context<char>>(&"{1}"[1], &"{1}"[3], basic_format_parse_context<char>{this->__str_, sizeof...(_Args)}, _Context{__types_.data(), __handles_.data(), sizeof...(_Args)})'
+  315 |             __format::__handle_replacement_field(__begin, __end, __parse_ctx, __ctx);
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_functions.h:370:5: note: in call to '__vformat_to<std::basic_format_parse_context<char>, std::__format::__compile_time_basic_format_context<char>>(basic_format_parse_context<char>{this->__str_, sizeof...(_Args)}, _Context{__types_.data(), __handles_.data(), sizeof...(_Args)})'
+  370 |     __format::__vformat_to(basic_format_parse_context<_CharT>{__str_, sizeof...(_Args)},
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  371 |                            _Context{__types_.data(), __handles_.data(), sizeof...(_Args)});
+      |                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+…/test/diagnostics.cpp:66:21: note: in call to 'basic_format_string<char[4]>("{1}")'
+   66 |   (void)std::format("{1}", 42);
+      |                     ^~~~~
+/usr/lib/llvm-18/bin/../include/c++/v1/__format/format_error.h:41:1: note: declared here
+   41 | __throw_format_error(const char* __s) {
+
+```
+
+The parts used from the Standard library will provide the messages of that
+library and probably look more like the latter message.
+
+
 Limitations
 -----------
 

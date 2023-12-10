@@ -8,27 +8,19 @@
 #ifndef CTF_FORMAT_HPP
 #define CTF_FORMAT_HPP
 
+#include "format_error.hpp"
+#include "formatter.hpp"
+#include "parse.hpp"
 #include "tuple.hpp"
 #include "utility.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <format>
 #include <tuple>
 
 namespace ctf {
-
-template <std::size_t Size> struct fixed_string {
-  constexpr fixed_string(const char (&r)[Size]) {
-    __builtin_memcpy(text, r, Size);
-  }
-  char text[Size];
-
-  // The size of the array shouldn't include the NUL character.
-  static constexpr std::size_t size = Size - 1;
-};
-
-template <std::size_t Size>
-fixed_string(const char (&)[Size]) -> fixed_string<Size>;
 
 template <fixed_string fmt, class... Args>
 constexpr std::string format(Args &&...args);
@@ -57,17 +49,11 @@ struct output_replacement_field {
   F formatter;
 };
 
-// unknown means no replacement field found yet.
-enum class Mode { unknown, manual, automatic };
+template <std::size_t o, arg_id_status i, class Tokens> struct parser_status {
+  static constexpr std::size_t offset = o;
+  static constexpr arg_id_status arg_id = i;
 
-template <std::size_t Offset = 0, std::size_t Index = 0 /* of arg-id */,
-          Mode M = Mode::unknown, class Tuple = tuple<>>
-struct ttoken_list {
-  static constexpr std::size_t offset = Offset;
-  static constexpr std::size_t index = Index;
-  static constexpr Mode mode = M;
-
-  Tuple data;
+  Tokens tokens;
 };
 
 template <std::size_t O, std::size_t C = std::size_t(-1),
@@ -87,7 +73,8 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
   // } allowed before colon
   // { allowed after colon
 
-  if constexpr (Fmt.text[R::offset] == '}') {
+  constexpr auto c = Fmt.text[R::offset];
+  if constexpr (c == '}') {
     if constexpr (R::level == 0)
       return R{};
     else
@@ -98,19 +85,32 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
     if constexpr (Fmt.text[R::offset] == ':')
       return parse_replacement_field<
           replacement_field<R::offset + 1, R::offset, R::id, R::level>, Fmt>();
-    else if constexpr (Fmt.text[R::offset] >= '0' &&
-                       Fmt.text[R::offset] <= '9') {
-      constexpr std::size_t d = Fmt.text[R::offset] - '0';
-      if constexpr (R::id == -1)
-        return parse_replacement_field<
-            replacement_field<R::offset + 1, R::colon, d, R::level>, Fmt>();
+    else if constexpr (c >= '0' && c <= '9') {
+      auto number =
+          ctf::parse_number<Fmt, parse_number_result<R::offset + 1, c - '0'>>();
+
+      if constexpr (number.value == -1)
+        return ctf::create_format_error(
+            "the value of the argument index is larger than the implementation "
+            "supports (2147483647)",
+            std::string(Fmt.text), R::offset, number.offset, number.offset);
+
       else
         return parse_replacement_field<
-            replacement_field<R::offset + 1, R::colon, R::id * 10 + d, R::level>,
+            replacement_field<number.offset, R::colon, number.value, R::level>,
             Fmt>();
+
     } else
-      static_assert(false, "The argument index should end with a ':' or a '}'");
-  } else if constexpr (Fmt.text[R::offset] == '{')
+      return ctf::create_format_error(
+          (R::offset == Fmt.size ? "unexpected end of the format string"
+                                 : "unexpected character in the format string"),
+          std::string(Fmt.text), R::offset - 1, R::offset, R::offset,
+          "{     -> an escaped {",                     //
+          "}     -> the end of the replacement-field", //
+          ":     -> start of the format-specifier",    //
+          "[0-9] -> an arg-id");
+
+  } else if constexpr (c == '{')
     return parse_replacement_field<
         replacement_field<R::offset + 1, R::colon, R::id, R::level + 1>, Fmt>();
   else
@@ -267,121 +267,120 @@ template <class CharT> struct format_arg<CharT, nullptr_t> {
   using type = const void *;
 };
 
-template <fixed_string Fmt, class... Args>
-consteval auto parse(auto token_list) {
-  using TL = decltype(token_list);
-  if constexpr (TL::offset >= Fmt.size) {
-    return token_list;
-  } else if constexpr (Fmt.text[TL::offset] == '{') {
-    // handle {{
-    if constexpr (Fmt.text[TL::offset + 1] == '{') {
-      auto t = append_char<TL::offset>(token_list.data);
-      using T = decltype(t);
-      return parse<Fmt, Args...>(
-          ttoken_list<TL::offset + 2, TL::index, TL::mode, T>{t});
+template <fixed_string fmt, class... Args>
+consteval auto handle_replacement_field3(auto status) {
+  using P = decltype(status);
+
+  auto arg_id = parse_arg_id<fmt, P::offset + 1, status.arg_id>();
+
+  if constexpr (ctf::is_format_error(arg_id))
+    return arg_id;
+  else {
+
+    constexpr auto c = fmt.text[arg_id.offset];
+    if constexpr (c != ':' && c != '}') {
+      // TODO both branches have some duplicates.
+      if constexpr (arg_id.offset == P::offset + 1)
+        // Nothing parsed so it's unknown what the user intended the { to be
+        // part of.
+        return ctf::create_format_error(
+            (arg_id.offset == fmt.size
+                 ? "unexpected end of the format string"
+                 : "unexpected character in the format string"),
+            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset,
+            "{     -> an escaped {",                     //
+            "}     -> the end of the replacement-field", //
+            ":     -> start of the format-specifier",    //
+            "[0-9] -> an arg-id");
+      else
+        // An arg-id was found, to the user intended it to be a
+        // replacement-field.
+        return ctf::create_format_error(
+            (arg_id.offset == fmt.size
+                 ? "unexpected end of the format string"
+                 : "unexpected character in the format string"),
+            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset,
+            "}     -> the end of the replacement-field", //
+            ":     -> start of the format-specifier",    //
+            "[0-9] -> continuation of the arg-id");
     } else {
-      // handle replacement field
-      using replacement =
-          decltype(parse_replacement_field<replacement_field<TL::offset + 1>,
-                                           Fmt>());
-      static_assert(Fmt.text[replacement::offset] == '}',
-                    "The replacement field misses a terminating '}'");
 
-      using A = std::remove_reference_t<pack_type<TL::index, Args...>>;
+      using T = std::remove_reference_t<pack_type<arg_id.index, Args...>>;
 
-      if constexpr (!std::formattable<A, char>) {
-        constexpr std::string_view sv{type_name<A>()};
-        static_assert(false, "The supplied argument type is not formattable");
-      } else {
-        using F = std::formatter<A, char>;
-        F f;
-        if constexpr (replacement::colon == -1) {
-          // empty string
-          std::format_parse_context parse_ctx{std::string_view{},
-                                              sizeof...(Args)};
-          f.parse(parse_ctx);
-        } else {
-          std::format_parse_context parse_ctx{
-              std::string_view{&Fmt.text[replacement::colon + 1],
-                               &Fmt.text[replacement::offset + 1]},
-              sizeof...(Args)};
-          f.parse(parse_ctx);
-        }
+      if constexpr (!std::formattable<T, char>)
+        return ctf::create_format_error(
+            "the supplied type for the argument is not formattable",
+            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset);
 
-        if constexpr (TL::mode == Mode::unknown) {
-          if constexpr (replacement::id == -1) {
-            static_assert(0 < sizeof...(Args),
-                          "The argument index value is too large for the "
-                          "number of arguments supplied");
+      else {
+        auto result = ctf::formatter<
+            T, fmt, arg_id.offset + std::size_t(fmt.text[arg_id.offset] == ':')
 
-            auto t = ctf::tuple_append(
-                token_list.data, output_replacement_field<TL::offset, 0, F>{f});
-            using T = decltype(t);
-            return parse<Fmt, Args...>(
-                ttoken_list<replacement::offset + 1, 1, Mode::automatic, T>{t});
+                        ,
 
-          } else {
-            static_assert(replacement::id < sizeof...(Args),
-                          "The argument index value is too large for the "
-                          "number of arguments supplied");
+            arg_id.status, Args...>::create();
 
-            auto t = ctf::tuple_append(
-                token_list.data,
-                output_replacement_field<TL::offset, TL::index, F>{f});
+        if constexpr (ctf::is_format_error(result))
+          return result;
+        else {
 
-            using T = decltype(t);
-            return parse<Fmt, Args...>(
-                ttoken_list<replacement::offset + 1, 0, Mode::manual, T>{t});
-          }
-        } else if constexpr (TL::mode == Mode::manual) {
-          static_assert(replacement::id != -1,
-                        "can't use automatic mode after selecting manual mode");
-          static_assert(replacement::id < sizeof...(Args),
-                        "The argument index value is too large for the number "
-                        "of arguments supplied");
+          auto tokens = ctf::tuple_append(
+              status.tokens,
+              output_replacement_field<P::offset, arg_id.index,
+                                       decltype(result.formatter)>{
+                  result.formatter});
 
-          auto t = ctf::tuple_append(
-              token_list.data,
-              output_replacement_field<TL::offset, replacement::id, F>{f});
+          return parse<fmt, Args...>(
+              parser_status<result.offset + 1, result.arg_id, decltype(tokens)>{
+                  tokens}
 
-          using T = decltype(t);
-          return parse<Fmt, Args...>(
-              ttoken_list<replacement::offset + 1, 0, Mode::manual, T>{t});
-
-        } else /* automatic */ {
-          static_assert(replacement::id == -1,
-                        "can't use manual mode after selecting automatic mode");
-          static_assert(TL::index < sizeof...(Args),
-                        "The argument index value is too large for the number "
-                        "of arguments supplied");
-
-          auto t = ctf::tuple_append(
-              token_list.data,
-              output_replacement_field<TL::offset, TL::index, F>{f});
-
-          using T = decltype(t);
-          return parse<Fmt, Args...>(
-              ttoken_list<replacement::offset + 1, TL::index + 1,
-                          Mode::automatic, T>{t});
+          );
         }
       }
     }
-
-  } else if constexpr (Fmt.text[TL::offset] == '}') {
-    // handle }}
-    static_assert(Fmt.text[TL::offset + 1] == '}',
-                  "The format string contains an invalid escape sequence");
-    auto t = append_char<TL::offset>(token_list.data);
-    using T = decltype(t);
-    return parse<Fmt, Args...>(
-        ttoken_list<TL::offset + 2, TL::index, TL::mode, T>{t});
-
-  } else {
-    auto t = append_char<TL::offset>(token_list.data);
-    using T = decltype(t);
-    return parse<Fmt, Args...>(
-        ttoken_list<TL::offset + 1, TL::index, TL::mode, T>{t});
   }
+}
+
+template <fixed_string Fmt, class... Args> consteval auto parse(auto status) {
+  using P = decltype(status);
+  if constexpr (P::offset >= Fmt.size) {
+    return status;
+  } else if constexpr (Fmt.text[P::offset] == '{') {
+    // handle {{
+    if constexpr (Fmt.text[P::offset + 1] == '{') {
+
+      auto tokens = append_char<P::offset>(status.tokens);
+      return parse<Fmt, Args...>(
+          parser_status<P::offset + 2, P::arg_id, decltype(tokens)>{tokens});
+
+    } else
+      return handle_replacement_field3<Fmt, Args...>(status);
+
+  } else if constexpr (Fmt.text[P::offset] == '}') {
+    // handle }}
+    if constexpr (Fmt.text[P::offset + 1] == '}') {
+
+      auto tokens = append_char<P::offset>(status.tokens);
+      return parse<Fmt, Args...>(
+          parser_status<P::offset + 2, P::arg_id, decltype(tokens)>{tokens});
+
+    } else
+      return format_error{std::string("\nexpected '}' in escape sequence\n") +
+                          std::string(Fmt.text) + "\n" +        //
+                          std::string(P::offset, '~') + "^\n" + //
+                          std::string(P::offset, ' ') + "}\n"};
+  } else {
+    auto tokens = append_char<P::offset>(status.tokens);
+    return parse<Fmt, Args...>(
+        parser_status<P::offset + 1, P::arg_id, decltype(tokens)>{tokens});
+  }
+}
+
+template <fixed_string fmt, class... Args> consteval auto parse() {
+  return parse<fmt,
+               typename format_arg<char, std::remove_cvref_t<Args>>::type...>(
+      parser_status<0, arg_id_status<index_mode::unknown, 0, sizeof...(Args)>{},
+                    tuple<>>{});
 }
 
 template <fixed_string Fmt, class... Args>
@@ -420,12 +419,16 @@ constexpr std::string format_tokens(auto tokens, Args &...args) {
 }
 
 template <fixed_string fmt, class... Args>
-constexpr std::string format(Args &&...args) {
-  constexpr auto token_list =
-      parse<fmt, typename format_arg<char, std::remove_cvref_t<Args>>::type...>(
-          ttoken_list<>{});
+concept valid = !ctf::is_format_error(parse<fmt, Args...>());
 
-  return format_tokens<fmt>(token_list.data, args...);
+template <fixed_string fmt, class... Args>
+constexpr std::string format(Args &&...args) {
+  constexpr auto status = parse<fmt, Args...>();
+
+  if constexpr (ctf::is_format_error(status))
+    static_assert(!"parse error", status);
+  else
+    return format_tokens<fmt>(status.tokens, args...);
 }
 
 } // namespace ctf
