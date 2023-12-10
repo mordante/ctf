@@ -8,28 +8,12 @@
 #ifndef CTF_FORMAT_HPP
 #define CTF_FORMAT_HPP
 
+#include "tuple.hpp"
+#include "utility.hpp"
+
 #include <cstddef>
 #include <format>
 #include <tuple>
-
-// TODO move to ct ns and remove unused stuff
-namespace ctp {
-
-template <class... Args> struct queue {};
-
-template <std::size_t I, class T, class... Args>
-consteval auto at_impl(queue<T, Args...>) {
-  if constexpr (I == 0)
-    return std::type_identity<T>{};
-  else
-    return at_impl<I - 1>(queue<Args...>{});
-}
-
-template <std::size_t I, class... Args> consteval auto at() {
-  return at_impl<I>(queue<Args...>{});
-}
-
-} // namespace ctp
 
 namespace ctf {
 
@@ -77,7 +61,7 @@ struct output_replacement_field {
 enum class Mode { unknown, manual, automatic };
 
 template <std::size_t Offset = 0, std::size_t Index = 0 /* of arg-id */,
-          Mode M = Mode::unknown, class Tuple = std::tuple<>>
+          Mode M = Mode::unknown, class Tuple = tuple<>>
 struct ttoken_list {
   static constexpr std::size_t offset = Offset;
   static constexpr std::size_t index = Index;
@@ -134,54 +118,30 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
         replacement_field<R::offset + 1, R::colon, R::id, R::level>, Fmt>();
 };
 
-template <class Tuple, std::size_t... I>
-consteval auto drop_tail_impl(Tuple t, std::__tuple_indices<I...>) {
-  return std::make_tuple(std::get<I>(std::forward<Tuple>(t))...);
-}
-
-template <class Tuple> consteval auto drop_tail(Tuple t) {
-  constexpr std::size_t size =
-      std::tuple_size_v<std::remove_reference_t<Tuple>>;
-  static_assert(size != 0);
-  if constexpr (size == 1)
-    return std::tuple<>{};
-  else
-    return drop_tail_impl(std::forward<Tuple>(t),
-                          typename std::__make_tuple_indices<size - 1>::type{});
-}
-
 // Adds a new char to the result.
 // The function tries a few optimizations
 // char + char -> text
 // text + char -> text
 template <std::size_t O, class Tuple> consteval auto append_char(Tuple data) {
-  if constexpr (std::same_as<Tuple, std::tuple<>>) {
-    return std::tuple_cat(data, std::make_tuple(output_char<O>{}));
+  if constexpr (std::same_as<Tuple, tuple<>>) {
+    return ctf::tuple_append(data, output_char<O>{});
   } else {
-    // type of the last element
-    using T = std::tuple_element<
-        std::tuple_size_v<std::remove_reference_t<Tuple>> - 1, Tuple>::type;
+    using T = ctf::tuple_type<ctf::tuple_size<Tuple> - 1, Tuple>;
+
     if constexpr (std::same_as<typename T::tag, output_char_tag>) {
-      if constexpr (T::offset + 1 == O) {
-        auto d = drop_tail(data);
-        auto t = std::make_tuple(output_text<T::offset, 2>{});
-        auto c = std::tuple_cat(d, t);
-        return c;
-      } else {
-        return std::tuple_cat(data, std::make_tuple(output_char<O>{}));
-      }
+      if constexpr (T::offset + 1 == O)
+        return ctf::tuple_replace_back(data, output_text<T::offset, 2>{});
+      else
+        return ctf::tuple_append(data, output_char<O>{});
+
     } else if constexpr (std::same_as<typename T::tag, output_text_tag>) {
-      if constexpr (T::offset + T::size == O) {
-        auto d = drop_tail(data);
-        auto t = std::make_tuple(output_text<T::offset, T::size + 1>{});
-        auto c = std::tuple_cat(d, t);
-        return c;
-      } else {
-        return std::tuple_cat(data, std::make_tuple(output_char<O>{}));
-      }
-    } else {
-      return std::tuple_cat(data, std::make_tuple(output_char<O>{}));
-    }
+      if constexpr (T::offset + T::size == O)
+        return ctf::tuple_replace_back(data,
+                                       output_text<T::offset, T::size + 1>{});
+      else
+        return ctf::tuple_append(data, output_char<O>{});
+    } else
+      return ctf::tuple_append(data, output_char<O>{});
   }
 }
 
@@ -205,7 +165,7 @@ consteval auto parse(auto token_list) {
       static_assert(Fmt.text[replacement::offset] == '}',
                     "The replacement field misses a terminating '}'");
 
-      using A = decltype(ctp::at<TL::index, Args...>())::type;
+      using A = pack_type<TL::index, Args...>;
       if constexpr (!std::formattable<A, char>) {
         constexpr std::string_view sv{type_name<A>()};
         static_assert(false, "The supplied argument type is not formattable");
@@ -231,9 +191,8 @@ consteval auto parse(auto token_list) {
                           "The argument index value is too large for the "
                           "number of arguments supplied");
 
-            auto t = std::tuple_cat(
-                token_list.data,
-                std::make_tuple(output_replacement_field<TL::offset, 0, F>{f}));
+            auto t = ctf::tuple_append(
+                token_list.data, output_replacement_field<TL::offset, 0, F>{f});
             using T = decltype(t);
             return parse<Fmt, Args...>(
                 ttoken_list<replacement::offset + 1, 1, Mode::automatic, T>{t});
@@ -242,11 +201,11 @@ consteval auto parse(auto token_list) {
             static_assert(replacement::id < sizeof...(Args),
                           "The argument index value is too large for the "
                           "number of arguments supplied");
-            auto t = std::tuple_cat(
+
+            auto t = ctf::tuple_append(
                 token_list.data,
-                std::make_tuple(
-                    output_replacement_field<TL::offset, replacement::id, F>{
-                        f}));
+                output_replacement_field<TL::offset, TL::index, F>{f});
+
             using T = decltype(t);
             return parse<Fmt, Args...>(
                 ttoken_list<replacement::offset + 1, 0, Mode::manual, T>{t});
@@ -257,10 +216,11 @@ consteval auto parse(auto token_list) {
           static_assert(replacement::id < sizeof...(Args),
                         "The argument index value is too large for the number "
                         "of arguments supplied");
-          auto t = std::tuple_cat(
+
+          auto t = ctf::tuple_append(
               token_list.data,
-              std::make_tuple(
-                  output_replacement_field<TL::offset, replacement::id, F>{f}));
+              output_replacement_field<TL::offset, replacement::id, F>{f});
+
           using T = decltype(t);
           return parse<Fmt, Args...>(
               ttoken_list<replacement::offset + 1, 0, Mode::manual, T>{t});
@@ -271,10 +231,11 @@ consteval auto parse(auto token_list) {
           static_assert(TL::index < sizeof...(Args),
                         "The argument index value is too large for the number "
                         "of arguments supplied");
-          auto t = std::tuple_cat(
+
+          auto t = ctf::tuple_append(
               token_list.data,
-              std::make_tuple(
-                  output_replacement_field<TL::offset, TL::index, F>{f}));
+              output_replacement_field<TL::offset, TL::index, F>{f});
+
           using T = decltype(t);
           return parse<Fmt, Args...>(
               ttoken_list<replacement::offset + 1, TL::index + 1,
@@ -305,17 +266,18 @@ constexpr std::string format_tokens(auto tokens, Args &&...args) {
   std::tuple t{std::forward<Args>(args)...};
 
   std::__for_each_index_sequence(
-      std::make_index_sequence<std::tuple_size_v<decltype(tokens)>>(),
+      std::make_index_sequence<ctf::tuple_size<decltype(tokens)>>(),
       [&]<std::size_t I> {
-        auto &token = std::get<I>(tokens);
-        using T = std::decay_t<decltype(token)>;
+        using T = ctf::tuple_type<I, decltype(tokens)>;
+        const auto &token = tokens.template get<T>();
 
-        if constexpr (std::same_as<typename T::tag, output_char_tag>) {
+        if constexpr (std::same_as<typename T::tag, output_char_tag>)
           result.push_back(Fmt.text[T::offset]);
-        } else if constexpr (std::same_as<typename T::tag, output_text_tag>) {
+        else if constexpr (std::same_as<typename T::tag, output_text_tag>)
           result.append(&Fmt.text[T::offset], &Fmt.text[T::offset + T::size]);
-        } else if constexpr (std::same_as<typename T::tag,
-                                          output_replacement_field_tag>) {
+        else if constexpr (std::same_as<typename T::tag,
+                                        output_replacement_field_tag>) {
+
           const auto &v = std::get<T::index>(t);
 
           using OutIt = std::back_insert_iterator<std::string>;
@@ -326,9 +288,8 @@ constexpr std::string format_tokens(auto tokens, Args &&...args) {
               std::back_inserter(result), format_args);
 
           token.formatter.format(v, context);
-        } else {
+        } else
           static_assert(false, "type not supported");
-        }
       });
   return result;
 }
