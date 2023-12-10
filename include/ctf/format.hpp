@@ -145,6 +145,128 @@ template <std::size_t O, class Tuple> consteval auto append_char(Tuple data) {
   }
 }
 
+// The format_arg's constructor type conversion rules.
+
+template <class CharT, class T> struct format_arg {
+  using type = T &;
+};
+
+template <class CharT> struct format_arg<CharT, bool> {
+  using type = bool;
+};
+
+template <> struct format_arg<char, char> {
+  using type = char;
+};
+
+template <> struct format_arg<wchar_t, char> {
+  using type = wchar_t;
+};
+
+template <> struct format_arg<wchar_t, wchar_t> {
+  using type = wchar_t;
+};
+
+template <class CharT> struct format_arg<CharT, signed char> {
+  using type = int;
+};
+
+template <class CharT> struct format_arg<CharT, short> {
+  using type = int;
+};
+
+template <class CharT> struct format_arg<CharT, int> {
+  using type = int;
+};
+
+template <class CharT> struct format_arg<CharT, long> {
+  using type = std::conditional_t<sizeof(long) == sizeof(int), int, long long>;
+};
+
+template <class CharT> struct format_arg<CharT, long long> {
+  using type = long long;
+};
+
+template <class CharT> struct format_arg<CharT, __int128_t> {
+  using type = __int128_t;
+};
+
+template <class CharT> struct format_arg<CharT, unsigned char> {
+  using type = unsigned;
+};
+
+template <class CharT> struct format_arg<CharT, unsigned short> {
+  using type = unsigned;
+};
+
+template <class CharT> struct format_arg<CharT, unsigned> {
+  using type = unsigned;
+};
+
+template <class CharT> struct format_arg<CharT, unsigned long> {
+  using type = std::conditional_t<sizeof(unsigned long) == sizeof(unsigned),
+                                  unsigned, unsigned long long>;
+};
+
+template <class CharT> struct format_arg<CharT, unsigned long long> {
+  using type = unsigned long long;
+};
+
+template <class CharT> struct format_arg<CharT, __uint128_t> {
+  using type = __uint128_t;
+};
+
+template <class CharT> struct format_arg<CharT, float> {
+  using type = float;
+};
+
+template <class CharT> struct format_arg<CharT, double> {
+  using type = double;
+};
+
+template <class CharT> struct format_arg<CharT, long double> {
+  using type = long double;
+};
+
+template <class CharT> struct format_arg<CharT, CharT *> {
+  static_assert(std::same_as<CharT, char> || std::same_as<CharT, wchar_t>);
+  using type = std::basic_string_view<CharT>;
+};
+
+template <class CharT> struct format_arg<CharT, const CharT *> {
+  static_assert(std::same_as<CharT, char> || std::same_as<CharT, wchar_t>);
+  using type = std::basic_string_view<CharT>;
+};
+
+template <class CharT, std::size_t N> struct format_arg<CharT, CharT[N]> {
+  static_assert(std::same_as<CharT, char> || std::same_as<CharT, wchar_t>);
+  using type = std::basic_string_view<CharT>;
+};
+
+template <class CharT, class Traits>
+struct format_arg<CharT, std::basic_string_view<CharT, Traits>> {
+  static_assert(std::same_as<CharT, char> || std::same_as<CharT, wchar_t>);
+  using type = std::basic_string_view<CharT>;
+};
+
+template <class CharT, class Traits, class Allocator>
+struct format_arg<CharT, std::basic_string<CharT, Traits, Allocator>> {
+  static_assert(std::same_as<CharT, char> || std::same_as<CharT, wchar_t>);
+  using type = std::basic_string_view<CharT>;
+};
+
+template <class CharT> struct format_arg<CharT, void *> {
+  using type = const void *;
+};
+
+template <class CharT> struct format_arg<CharT, const void *> {
+  using type = const void *;
+};
+
+template <class CharT> struct format_arg<CharT, nullptr_t> {
+  using type = const void *;
+};
+
 template <fixed_string Fmt, class... Args>
 consteval auto parse(auto token_list) {
   using TL = decltype(token_list);
@@ -165,7 +287,8 @@ consteval auto parse(auto token_list) {
       static_assert(Fmt.text[replacement::offset] == '}',
                     "The replacement field misses a terminating '}'");
 
-      using A = pack_type<TL::index, Args...>;
+      using A = std::remove_reference_t<pack_type<TL::index, Args...>>;
+
       if constexpr (!std::formattable<A, char>) {
         constexpr std::string_view sv{type_name<A>()};
         static_assert(false, "The supplied argument type is not formattable");
@@ -260,10 +383,12 @@ consteval auto parse(auto token_list) {
         ttoken_list<TL::offset + 1, TL::index, TL::mode, T>{t});
   }
 }
+
 template <fixed_string Fmt, class... Args>
-constexpr std::string format_tokens(auto tokens, Args &&...args) {
+constexpr std::string format_tokens(auto tokens, Args &...args) {
   std::string result;
-  std::tuple t{std::forward<Args>(args)...};
+  std::tuple t{
+      typename format_arg<char, std::remove_cvref_t<Args>>::type{args}...};
 
   std::__for_each_index_sequence(
       std::make_index_sequence<ctf::tuple_size<decltype(tokens)>>(),
@@ -296,9 +421,11 @@ constexpr std::string format_tokens(auto tokens, Args &&...args) {
 
 template <fixed_string fmt, class... Args>
 constexpr std::string format(Args &&...args) {
-  constexpr auto token_list = parse<fmt, Args...>(ttoken_list<>{});
+  constexpr auto token_list =
+      parse<fmt, typename format_arg<char, std::remove_cvref_t<Args>>::type...>(
+          ttoken_list<>{});
 
-  return format_tokens<fmt>(token_list.data, std::forward<Args>(args)...);
+  return format_tokens<fmt>(token_list.data, args...);
 }
 
 } // namespace ctf

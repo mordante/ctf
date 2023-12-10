@@ -43,7 +43,6 @@ int main() {
     ankerl::nanobench::doNotOptimizeAway(s);
   });
 
-#if 0 // TODO Enable when chrono formatting works.
   {
     using namespace std::literals::chrono_literals;
     std::chrono::sys_seconds time{2'000'000'000s};
@@ -59,7 +58,6 @@ int main() {
       ankerl::nanobench::doNotOptimizeAway(s);
     });
   }
-#endif
 
   generate_output("html", ankerl::nanobench::templates::htmlBoxplot(), bench);
   generate_output("json", ankerl::nanobench::templates::json(), bench);

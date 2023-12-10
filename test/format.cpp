@@ -428,10 +428,30 @@ boost::ut::suite<"format string"> format_string = [] {
         },
         string_list{});
   };
-  /*
-   * TODO IMPLEMENT
-   * template<size_t N> struct formatter<charT[N], charT>;
-   */
+
+  // The string literal requires a special test.
+  // This test avaoids decaying const char(&)[N] to const char*.
+  "string_literal"_test = [] {
+    /*** default ***/
+    expect(eq(ctf::format<"{}">("hello"), "hello"sv));
+
+    expect(eq(ctf::format<"{:^^7}">("hello"), "^hello^"sv));
+    expect(eq(ctf::format<"{:^^7}">("hellö"), "^hellö^"sv));
+    expect(eq(ctf::format<"{:^^7}">("hell\u0308o"), "^hell\u0308o^"sv));
+
+    // 2 columns
+    expect(eq(ctf::format<"{:^^4}">("\u1100"), "^\u1100^"sv));
+
+    /*** string ***/
+    expect(eq(ctf::format<"{:?}">("hello"), "\"hello\""sv));
+    expect(eq(ctf::format<"{:^^9?}">("hello"), "^\"hello\"^"sv));
+    expect(eq(ctf::format<"{:^^9?}">("hellö"), "^\"hellö\"^"sv));
+
+    /*** debug ***/
+    expect(eq(ctf::format<"{:?}">("hello"), "\"hello\""sv));
+    expect(eq(ctf::format<"{:^^9?}">("hello"), "^\"hello\"^"sv));
+    expect(eq(ctf::format<"{:^^9?}">("hellö"), "^\"hellö\"^"sv));
+  };
 };
 
 boost::ut::suite<"format pointer"> format_pointer = [] {
@@ -473,21 +493,12 @@ boost::ut::suite<"format chrono"> format_chrono = [] {
   using namespace std::literals::chrono_literals;
 
   // 03:33:20 UTC on Wednesday, 18 May 2033
-  {
-    auto time = std::chrono::sys_seconds{2'000'000'000s};
-    expect(eq(std::format("{}", time), "2033-05-18 03:33:20"sv));
-    // TODO fix this failure
-    // expect(eq(ctf::format<"{} ">(time), "a"sv));
-  }
-
-#define time                                                                   \
-  std::chrono::sys_seconds { 2'000'000'000s }
+  auto time = std::chrono::sys_seconds{2'000'000'000s};
   expect(eq(ctf::format<"{}">(time), "2033-05-18 03:33:20"sv));
   expect(eq(ctf::format<"The current time is {:%Y.%m.%d %H:%M:%S}">(time),
             "The current time is 2033.05.18 03:33:20"sv));
   expect(eq(ctf::format<"{:%tThe current time is %Y.%m.%d %H:%M:%S}">(time),
             "\tThe current time is 2033.05.18 03:33:20"sv));
-#undef time
 };
 
 boost::ut::suite<"format ranges"> format_ranges = [] {
