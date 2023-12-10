@@ -74,7 +74,7 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
   // } allowed before colon
   // { allowed after colon
 
-  constexpr auto c = Fmt.text[R::offset];
+  constexpr auto c = Fmt[R::offset];
   if constexpr (c == '}') {
     if constexpr (R::level == 0)
       return R{};
@@ -83,7 +83,7 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
           replacement_field<R::offset + 1, R::colon, R::id, R::level - 1>,
           Fmt>();
   } else if constexpr (R::colon == -1) {
-    if constexpr (Fmt.text[R::offset] == ':')
+    if constexpr (Fmt[R::offset] == ':')
       return parse_replacement_field<
           replacement_field<R::offset + 1, R::offset, R::id, R::level>, Fmt>();
     else if constexpr (c >= '0' && c <= '9') {
@@ -94,7 +94,7 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
         return ctf::create_format_error(
             "the value of the argument index is larger than the implementation "
             "supports (2147483647)",
-            std::string(Fmt.text), R::offset, number.offset, number.offset);
+            Fmt, R::offset, number.offset, number.offset);
 
       else
         return parse_replacement_field<
@@ -105,7 +105,7 @@ template <class R, fixed_string Fmt> consteval auto parse_replacement_field() {
       return ctf::create_format_error(
           (R::offset == Fmt.size ? "unexpected end of the format string"
                                  : "unexpected character in the format string"),
-          std::string(Fmt.text), R::offset - 1, R::offset, R::offset,
+          Fmt, R::offset - 1, R::offset, R::offset,
           "{     -> an escaped {",                     //
           "}     -> the end of the replacement-field", //
           ":     -> start of the format-specifier",    //
@@ -278,17 +278,17 @@ consteval auto handle_replacement_field3(auto status) {
     return arg_id;
   else {
 
-    constexpr auto c = fmt.text[arg_id.offset];
+    constexpr auto c = fmt[arg_id.offset];
     if constexpr (c != ':' && c != '}') {
       // TODO both branches have some duplicates.
       if constexpr (arg_id.offset == P::offset + 1)
         // Nothing parsed so it's unknown what the user intended the { to be
         // part of.
         return ctf::create_format_error(
-            (arg_id.offset == fmt.size
+            (arg_id.offset == fmt.size()
                  ? "unexpected end of the format string"
                  : "unexpected character in the format string"),
-            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset,
+            fmt, P::offset, arg_id.offset, arg_id.offset,
             "{     -> an escaped {",                     //
             "}     -> the end of the replacement-field", //
             ":     -> start of the format-specifier",    //
@@ -297,10 +297,10 @@ consteval auto handle_replacement_field3(auto status) {
         // An arg-id was found, to the user intended it to be a
         // replacement-field.
         return ctf::create_format_error(
-            (arg_id.offset == fmt.size
+            (arg_id.offset == fmt.size()
                  ? "unexpected end of the format string"
                  : "unexpected character in the format string"),
-            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset,
+            fmt, P::offset, arg_id.offset, arg_id.offset,
             "}     -> the end of the replacement-field", //
             ":     -> start of the format-specifier",    //
             "[0-9] -> continuation of the arg-id");
@@ -310,12 +310,12 @@ consteval auto handle_replacement_field3(auto status) {
 
       if constexpr (!std::formattable<T, char>)
         return ctf::create_format_error(
-            "the supplied type for the argument is not formattable",
-            std::string(fmt.text), P::offset, arg_id.offset, arg_id.offset);
+            "the supplied type for the argument is not formattable", fmt,
+            P::offset, arg_id.offset, arg_id.offset);
 
       else {
         auto result = ctf::formatter<
-            T, fmt, arg_id.offset + std::size_t(fmt.text[arg_id.offset] == ':')
+            T, fmt, arg_id.offset + std::size_t(fmt[arg_id.offset] == ':')
 
                         ,
 
@@ -344,11 +344,11 @@ consteval auto handle_replacement_field3(auto status) {
 
 template <fixed_string Fmt, class... Args> consteval auto parse(auto status) {
   using P = decltype(status);
-  if constexpr (P::offset >= Fmt.size) {
+  if constexpr (P::offset >= Fmt.size()) {
     return status;
-  } else if constexpr (Fmt.text[P::offset] == '{') {
+  } else if constexpr (Fmt[P::offset] == '{') {
     // handle {{
-    if constexpr (Fmt.text[P::offset + 1] == '{') {
+    if constexpr (Fmt[P::offset + 1] == '{') {
 
       auto tokens = append_char<P::offset>(status.tokens);
       return parse<Fmt, Args...>(
@@ -357,19 +357,17 @@ template <fixed_string Fmt, class... Args> consteval auto parse(auto status) {
     } else
       return handle_replacement_field3<Fmt, Args...>(status);
 
-  } else if constexpr (Fmt.text[P::offset] == '}') {
+  } else if constexpr (Fmt[P::offset] == '}') {
     // handle }}
-    if constexpr (Fmt.text[P::offset + 1] == '}') {
+    if constexpr (Fmt[P::offset + 1] == '}') {
 
       auto tokens = append_char<P::offset>(status.tokens);
       return parse<Fmt, Args...>(
           parser_status<P::offset + 2, P::arg_id, decltype(tokens)>{tokens});
 
     } else
-      return format_error{std::string("\nexpected '}' in escape sequence\n") +
-                          std::string(Fmt.text) + "\n" +        //
-                          std::string(P::offset, '~') + "^\n" + //
-                          std::string(P::offset, ' ') + "}\n"};
+      return create_format_error("expected '}' in escape sequence", Fmt, 0,
+                                 P::offset, P::offset, "}");
   } else {
     auto tokens = append_char<P::offset>(status.tokens);
     return parse<Fmt, Args...>(
@@ -397,9 +395,9 @@ constexpr std::string format_tokens(auto tokens, Args &...args) {
         const auto &token = tokens.template get<T>();
 
         if constexpr (std::same_as<typename T::tag, output_char_tag>)
-          result.push_back(Fmt.text[T::offset]);
+          result.push_back(Fmt[T::offset]);
         else if constexpr (std::same_as<typename T::tag, output_text_tag>)
-          result.append(&Fmt.text[T::offset], &Fmt.text[T::offset + T::size]);
+          result.append(&Fmt[T::offset], &Fmt[T::offset + T::size]);
         else if constexpr (std::same_as<typename T::tag,
                                         output_replacement_field_tag>) {
 

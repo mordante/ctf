@@ -42,10 +42,10 @@ struct formatter {
   static consteval auto create() {
     constexpr std::size_t end =
         [&]<std::size_t offset, std::size_t level>(this auto self) {
-          if constexpr (offset == fmt.size)
+          if constexpr (offset == fmt.size())
             return offset;
           else {
-            constexpr auto c = fmt.text[offset];
+            constexpr auto c = fmt[offset];
             if constexpr (c == '}') {
               if constexpr (level == 0)
                 return offset;
@@ -58,22 +58,20 @@ struct formatter {
           }
         }.template operator()<begin, 0>();
 
-    if constexpr (fmt.text[end] != '}')
+    if constexpr (fmt[end] != '}')
       return ctf::create_format_error(
-          "unable to find the end of the format-spec", std::string(fmt.text),
-          begin, end, end);
+          "unable to find the end of the format-spec", fmt, begin, end, end);
     else {
       using CharT = decltype(fmt)::char_type;
       using F = std::formatter<T, CharT>;
       F f;
 
-      // &fmt.text[fmt::size] is valid; it points to the NUL terminator.
+      // &fmt[fmt::size()] is valid; it points to the NUL terminator.
       std::format_parse_context parse_ctx{
-          std::string_view{&fmt.text[begin], &fmt.text[fmt.size]},
-          sizeof...(Args)};
+          std::string_view{&fmt[begin], &fmt[fmt.size()]}, sizeof...(Args)};
       auto it = f.parse(parse_ctx);
 
-      if (it != &fmt.text[end])
+      if (it != &fmt[end])
         throw std::format_error(
             "format specifiers with unbalanced {} pairs are not supported");
 

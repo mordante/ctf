@@ -52,11 +52,10 @@ struct fill_result {
 
 template <fixed_string fmt, parse_status status> consteval auto parse_fill() {
   auto consume = [&]<fill_result fill, std::size_t index> {
-    constexpr char code_unit = fmt.text[fill.offset];
+    constexpr char code_unit = fmt[fill.offset];
     if constexpr ((code_unit & 0b1100'0000) != 0b1000'0000)
-      return create_format_error("expected UTF-8 continuation code unit",
-                                 std::string(fmt.text), status.offset,
-                                 fill.offset, fill.offset);
+      return create_format_error("expected UTF-8 continuation code unit", fmt,
+                                 status.offset, fill.offset, fill.offset);
     else
       return fill_result<fill.offset + 1,
                          std::__format_spec::__code_point<char>{
@@ -67,7 +66,7 @@ template <fixed_string fmt, parse_status status> consteval auto parse_fill() {
                                          : fill.value.__data[3])}>{};
   };
 
-  constexpr char c = fmt.text[status.offset];
+  constexpr char c = fmt[status.offset];
   auto cp_1 = fill_result<status.offset + 1,
                           std::__format_spec::__code_point<char>{c}>{};
   constexpr int bits = std::countl_one(static_cast<unsigned char>(c));
@@ -75,12 +74,12 @@ template <fixed_string fmt, parse_status status> consteval auto parse_fill() {
     return cp_1;
   else if constexpr (bits == 1)
     return create_format_error(
-        "the UTF-8 code point starts with a continuation code unit",
-        std::string(fmt.text), status.offset, status.offset, status.offset);
+        "the UTF-8 code point starts with a continuation code unit", fmt,
+        status.offset, status.offset, status.offset);
   else if constexpr (bits > 4)
     return create_format_error(
-        "the UTF-8 code point starts with an invalid code unit",
-        std::string(fmt.text), status.offset, status.offset, status.offset);
+        "the UTF-8 code point starts with an invalid code unit", fmt,
+        status.offset, status.offset, status.offset);
   else {
     auto cp_2 = consume.template operator()<cp_1, 1>();
     if constexpr (is_format_error(cp_2) || bits == 2)
@@ -141,7 +140,7 @@ consteval auto parse_fill_align() {
     return fill;
   else {
     constexpr std::__format_spec::__alignment alignment =
-        get_alignment(fmt.text[fill.offset]);
+        get_alignment(fmt[fill.offset]);
     if constexpr (alignment != std::__format_spec::__alignment::__default)
       // replace text and alignment
       return parse_status<
@@ -150,7 +149,7 @@ consteval auto parse_fill_align() {
 
     else {
       constexpr std::__format_spec::__alignment alignment =
-          get_alignment(fmt.text[status.offset]);
+          get_alignment(fmt[status.offset]);
       if constexpr (alignment != std::__format_spec::__alignment::__default)
         // keep space and new aligment
         return parse_status<status.offset + 1, status.arg_id,
@@ -196,7 +195,7 @@ template <fixed_string fmt, parse_status status> consteval auto parse_sign() {
     return parse_status<status.offset + 1, status.arg_id,
                         set_sign<status.parser, sign>()>{};
   };
-  constexpr auto c = fmt.text[status.offset];
+  constexpr auto c = fmt[status.offset];
   using enum std::__format_spec::__sign;
   if constexpr (c == CharT('-'))
     return consume.template operator()<__minus>();
@@ -214,8 +213,8 @@ consteval auto parse_sign() {
   constexpr auto result = parse_sign<fmt, status>();
   if constexpr (result.offset != status.offset && !fields.__sign_)
     return create_format_error(
-        "the format specification does not allow the sign option",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        "the format specification does not allow the sign option", fmt, begin,
+        status.offset, status.offset);
   else
     return result;
 }
@@ -249,7 +248,7 @@ consteval std::__format_spec::__parser<CharT> set_alternate_form() {
 
 template <fixed_string fmt, parse_status status>
 consteval auto parse_alternate_form() {
-  if constexpr (fmt.text[status.offset] == CharT('#'))
+  if constexpr (fmt[status.offset] == CharT('#'))
     return parse_status<status.offset + 1, status.arg_id,
                         set_alternate_form<status.parser>()>{};
   else
@@ -263,7 +262,7 @@ consteval auto parse_alternate_form() {
   if constexpr (result.offset != status.offset && !fields.__alternate_form_)
     return create_format_error(
         "the format specification does not allow the alternate form option",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        fmt, begin, status.offset, status.offset);
   else
     return result;
 }
@@ -304,7 +303,7 @@ consteval std::__format_spec::__parser<CharT> set_zero_padding() {
 
 template <fixed_string fmt, parse_status status>
 consteval auto parse_zero_padding() {
-  if constexpr (fmt.text[status.offset] == CharT('0'))
+  if constexpr (fmt[status.offset] == CharT('0'))
     return parse_status<status.offset + 1, status.arg_id,
                         set_zero_padding<status.parser>()>{};
   else
@@ -317,8 +316,8 @@ consteval auto parse_zero_padding() {
   constexpr auto result = parse_zero_padding<fmt, status>();
   if constexpr (result.offset != status.offset && !fields.__zero_padding_)
     return create_format_error(
-        "the format specification does not allow the zero-padding option",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        "the format specification does not allow the zero-padding option", fmt,
+        begin, status.offset, status.offset);
   else
     return result;
 }
@@ -359,29 +358,27 @@ template <std::size_t O, std::size_t I> struct get_arg_id_result {
 template <fixed_string fmt, std::size_t begin, // at opening curly
           std::size_t arg_id, class... Args>
 consteval auto get_arg_id() {
-  constexpr auto c = fmt.text[begin + 1];
+  constexpr auto c = fmt[begin + 1];
   if constexpr (c == CharT('}')) {
     if constexpr (arg_id != -1)
       return create_format_error("expected '}' while in automatic arg-id mode",
-                                 std::string(fmt.text), begin, begin + 2,
-                                 begin + 2, "}");
+                                 fmt, begin, begin + 2, begin + 2, "}");
     else
       return get_arg_id_result<begin + 2, arg_id + 1>{};
   } else {
     if constexpr (arg_id != -1)
       return create_format_error("expected '}' while in automatic arg-id mode",
-                                 std::string(fmt.text), begin, begin + 2,
-                                 begin + 2, "}");
+                                 fmt, begin, begin + 2, begin + 2, "}");
   }
 }
 
 template <fixed_string fmt, std::size_t begin, parse_status status,
           class... Args>
 consteval auto parse_width() {
-  constexpr auto c = fmt.text[status.offset];
+  constexpr auto c = fmt[status.offset];
   if constexpr (c == CharT('{')) {
     // Note this code needs to be shared between width and precision.
-    constexpr auto c = fmt.text[status.offset + 1];
+    constexpr auto c = fmt[status.offset + 1];
 
     //
     // TODO ADD - TEST IN MAIN PARSER TOO
@@ -389,8 +386,8 @@ consteval auto parse_width() {
     //
     if constexpr (c == CharT('-'))
       return create_format_error(
-          "the argument index may not be a negative value",
-          std::string(fmt.text), begin, status.offset + 1, status.offset + 1);
+          "the argument index may not be a negative value", fmt, begin,
+          status.offset + 1, status.offset + 1);
 
     auto arg_id = parse_arg_id<fmt, status.offset + 1, status.arg_id>();
 
@@ -398,7 +395,7 @@ consteval auto parse_width() {
       return arg_id;
     else {
 
-      constexpr auto c = fmt.text[arg_id.offset];
+      constexpr auto c = fmt[arg_id.offset];
       if constexpr (c != '}') {
         // TODO both branches have some duplicates.
         // TODO in this code we know the mode,
@@ -406,22 +403,20 @@ consteval auto parse_width() {
           // Nothing parsed so it's unknown what the user intended the { to be
           // part of.
           return ctf::create_format_error(
-              (arg_id.offset == fmt.size
+              (arg_id.offset == fmt.size()
                    ? "unexpected end of the format string"
                    : "unexpected character in the arg-id"),
-              std::string(fmt.text), status.offset + 1, arg_id.offset,
-              arg_id.offset,
+              fmt, status.offset + 1, arg_id.offset, arg_id.offset,
               "}     -> the end of the arg-id", //
               "[0-9] -> an arg-id");
         else
           // An arg-id was found, to the user intended it to be a
           // replacement-field.
           return ctf::create_format_error(
-              (arg_id.offset == fmt.size
+              (arg_id.offset == fmt.size()
                    ? "unexpected end of the format string"
                    : "unexpected character in the arg-id"),
-              std::string(fmt.text), status.offset + 1, arg_id.offset,
-              arg_id.offset,
+              fmt, status.offset + 1, arg_id.offset, arg_id.offset,
               "}     -> the end of the arg-id", //
               "[0-9] -> continuation of the arg-id");
 
@@ -435,8 +430,8 @@ consteval auto parse_width() {
                       !std::same_as<T, unsigned long long>)
           return create_format_error("the type of the arg-id is not a standard "
                                      "signed or unsigned integer type",
-                                     std::string(fmt.text), status.offset,
-                                     arg_id.offset, arg_id.offset);
+                                     fmt, status.offset, arg_id.offset,
+                                     arg_id.offset);
         else
           return parse_status<arg_id.offset + 1, arg_id.status,
                               set_width<status.parser, arg_id.index, true>()>{};
@@ -444,16 +439,15 @@ consteval auto parse_width() {
     }
   } else if constexpr (c == CharT('0')) {
     return create_format_error(
-        "the width option should not have a leading zero",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        "the width option should not have a leading zero", fmt, begin,
+        status.offset, status.offset);
   } else if constexpr (c >= CharT('1') && c <= CharT('9')) {
     auto number =
         parse_number<fmt, parse_number_result<status.offset + 1, c - '0'>>();
     if constexpr (number.value == -1)
       return create_format_error("the value of the width option is larger than "
                                  "the implementation supports (2147483647)",
-                                 std::string(fmt.text), begin, status.offset,
-                                 status.offset);
+                                 fmt, begin, status.offset, status.offset);
     else
       return parse_status<number.offset, status.arg_id,
                           set_width<status.parser, number.value, false>()>{};
@@ -494,20 +488,20 @@ template <fixed_string fmt, std::size_t begin,
           class... Args>
 consteval auto parse_precision() {
 
-  constexpr auto c = fmt.text[status.offset];
+  constexpr auto c = fmt[status.offset];
 
   if constexpr (c != CharT('.'))
     return status;
   else if constexpr (!fields.__precision_)
     return create_format_error(
-        "the format specification does not allow the precicion option",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        "the format specification does not allow the precicion option", fmt,
+        begin, status.offset, status.offset);
   else {
 
-    constexpr auto c = fmt.text[status.offset + 1];
+    constexpr auto c = fmt[status.offset + 1];
     if constexpr (c == CharT('{')) {
       // Note this code needs to be shared between width and precision.
-      constexpr auto c = fmt.text[status.offset + 2];
+      constexpr auto c = fmt[status.offset + 2];
 
       //
       // TODO ADD - TEST IN MAIN PARSER TOO
@@ -515,8 +509,8 @@ consteval auto parse_precision() {
       //
       if constexpr (c == CharT('-'))
         return create_format_error(
-            "the argument index may not be a negative value",
-            std::string(fmt.text), begin, status.offset + 2, status.offset + 2);
+            "the argument index may not be a negative value", fmt, begin,
+            status.offset + 2, status.offset + 2);
 
       auto arg_id = parse_arg_id<fmt, status.offset + 2, status.arg_id>();
 
@@ -524,7 +518,7 @@ consteval auto parse_precision() {
         return arg_id;
       else {
 
-        constexpr auto c = fmt.text[arg_id.offset];
+        constexpr auto c = fmt[arg_id.offset];
         if constexpr (c != '}') {
           // TODO both branches have some duplicates.
           // TODO in this code we know the mode,
@@ -532,22 +526,20 @@ consteval auto parse_precision() {
             // Nothing parsed so it's unknown what the user intended the { to be
             // part of.
             return ctf::create_format_error(
-                (arg_id.offset == fmt.size
+                (arg_id.offset == fmt.size()
                      ? "unexpected end of the format string"
                      : "unexpected character in the arg-id"),
-                std::string(fmt.text), status.offset + 2, arg_id.offset,
-                arg_id.offset,
+                fmt, status.offset + 2, arg_id.offset, arg_id.offset,
                 "}     -> the end of the arg-id", //
                 "[0-9] -> an arg-id");
           else
             // An arg-id was found, to the user intended it to be a
             // replacement-field.
             return ctf::create_format_error(
-                (arg_id.offset == fmt.size
+                (arg_id.offset == fmt.size()
                      ? "unexpected end of the format string"
                      : "unexpected character in the arg-id"),
-                std::string(fmt.text), status.offset + 1, arg_id.offset,
-                arg_id.offset,
+                fmt, status.offset + 1, arg_id.offset, arg_id.offset,
                 "}     -> the end of the arg-id", //
                 "[0-9] -> continuation of the arg-id");
 
@@ -562,8 +554,7 @@ consteval auto parse_precision() {
             return create_format_error(
                 "the type of the arg-id is not a standard "
                 "signed or unsigned integer type",
-                std::string(fmt.text), status.offset, arg_id.offset,
-                arg_id.offset);
+                fmt, status.offset, arg_id.offset, arg_id.offset);
           else
             return parse_status<
                 arg_id.offset + 1, arg_id.status,
@@ -577,7 +568,7 @@ consteval auto parse_precision() {
         return create_format_error(
             "the value of the precision option is larger than "
             "the implementation supports (2147483647)",
-            std::string(fmt.text), begin, status.offset, status.offset);
+            fmt, begin, status.offset, status.offset);
       else
         return parse_status<
             number.offset, status.arg_id,
@@ -615,7 +606,7 @@ consteval std::__format_spec::__parser<CharT> set_locale_specific_form() {
 
 template <fixed_string fmt, parse_status status>
 consteval auto parse_locale_specific_form() {
-  if constexpr (fmt.text[status.offset] == CharT('L'))
+  if constexpr (fmt[status.offset] == CharT('L'))
     return parse_status<status.offset + 1, status.arg_id,
                         set_locale_specific_form<status.parser>()>{};
   else
@@ -630,8 +621,7 @@ consteval auto parse_locale_specific_form() {
                 !fields.__locale_specific_form_)
     return create_format_error("the format specification does not allow the "
                                "locale-specific form option",
-                               std::string(fmt.text), begin, status.offset,
-                               status.offset);
+                               fmt, begin, status.offset, status.offset);
   else
     return result;
 }
@@ -665,7 +655,7 @@ consteval std::__format_spec::__parser<CharT> set_clear_brackets() {
 
 template <fixed_string fmt, parse_status status>
 consteval auto parse_clear_brackets() {
-  if constexpr (fmt.text[status.offset] == CharT('n'))
+  if constexpr (fmt[status.offset] == CharT('n'))
     return parse_status<status.offset + 1, status.arg_id,
                         set_clear_brackets<status.parser>()>{};
   else
@@ -679,7 +669,7 @@ consteval auto parse_clear_brackets() {
   if constexpr (result.offset != status.offset && !fields.__clear_brackets_)
     return create_format_error(
         "the format specification does not allow the clear brackets option",
-        std::string(fmt.text), begin, status.offset, status.offset);
+        fmt, begin, status.offset, status.offset);
   else
     return result;
 }
@@ -723,7 +713,7 @@ consteval auto parse_type() {
   if constexpr (!fields.__type_)
     return status;
   else {
-    constexpr auto c = fmt.text[status.offset];
+    constexpr auto c = fmt[status.offset];
     using enum std::__format_spec::__type;
     if constexpr (c == CharT('A'))
       return consume.template operator()<__hexfloat_upper_case>();
@@ -784,7 +774,7 @@ consteval auto parse() {
   // This reduces the number of instantiations.
   //
 
-  if constexpr (begin == fmt.size)
+  if constexpr (begin == fmt.size())
     return status;
   else {
     auto fill_align = parse_fill_align<fmt, begin, status>();
@@ -830,8 +820,8 @@ consteval auto parse() {
                       return type;
                     else {
                       if constexpr (fields.__consume_all_ &&
-                                    type.offset != fmt.size &&
-                                    fmt.text[type.offset] != CharT('}')) {
+                                    type.offset != fmt.size() &&
+                                    fmt[type.offset] != CharT('}')) {
 
                         return format_error{
                             std::string("TODO IMPLEMENT proper message")};
@@ -858,11 +848,9 @@ consteval auto process_parsed_string() {
                 type == std::__format_spec::__type::__debug)
     return status;
   else
-    return format_error{
-        "\nthe display type is not valid for a string argument\n" +
-        std::string(fmt.text) + "\n" + //
-        std::string(begin, ' ') +
-        std::string((status.offset - 1) - begin, '~') + '^'};
+    return create_format_error(
+        "the display type is not valid for a string argument", fmt, begin,
+        status.offset - 1, status.offset - 1);
 }
 
 } // namespace detail

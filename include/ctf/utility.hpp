@@ -16,19 +16,43 @@
 
 namespace ctf {
 
-template <std::size_t Size> struct fixed_string {
-  using char_type = char;
-  constexpr fixed_string(const char (&r)[Size]) {
-    __builtin_memcpy(text, r, Size);
+// Compile-time c string wrapper class.
+//
+// Users may assume the NUL terminator present so
+//   fixed_string f;
+//   f[f.size()];
+// is valid and returns the NUL terminator.
+//
+// This makes the code for the formatter a lot simpler, no need to do a bouds
+// check on the size of the input. The NUL character is not used in the parser
+// so it will never match.
+template <class CharT, std::size_t Size> class fixed_string {
+public:
+  using char_type = CharT;
+
+  consteval fixed_string(const CharT (&r)[Size]) {
+    __builtin_memcpy(private_str_, r, Size);
   }
-  char text[Size];
 
   // The size of the array shouldn't include the NUL character.
-  static constexpr std::size_t size = Size - 1;
+  consteval std::size_t size() const { return Size - 1; }
+
+  consteval const CharT &operator[](std::size_t i) const {
+    return private_str_[i];
+  }
+
+  consteval operator std::string() const { return std::string(private_str_); }
+
+  // When the class has a private member it's no longer a structural type and
+  // can't be used as an template argument.
+  CharT private_str_[Size];
 };
 
 template <std::size_t Size>
-fixed_string(const char (&)[Size]) -> fixed_string<Size>;
+fixed_string(const char (&)[Size]) -> fixed_string<char, Size>;
+
+template <std::size_t Size>
+fixed_string(const wchar_t (&)[Size]) -> fixed_string<wchar_t, Size>;
 
 consteval std::string to_string(std::size_t v) {
   char buffer[20];

@@ -53,7 +53,7 @@ template <std::size_t O, std::int32_t V> struct parse_number_result {
 template <fixed_string fmt, class result> auto consteval parse_number() {
   static_assert(result::value >= 0, "negative values are flags");
 
-  constexpr auto c = fmt.text[result::offset];
+  constexpr auto c = fmt[result::offset];
   using CharT = decltype(c);
 
   if constexpr (c >= CharT('0') && c <= CharT('9')) {
@@ -165,35 +165,35 @@ create_format_error_arg_id_out_of_bounds(std::string &&fmt, std::size_t arg_id,
 template <fixed_string fmt, std::size_t offset, arg_id_status status>
 auto consteval parse_arg_id_manual() {
   // The number is parsed to mark the entire value when in the wrong mode.
-  auto number = ctf::parse_number<
-      fmt, parse_number_result<offset + 1, fmt.text[offset] - '0'>>();
+  auto number =
+      ctf::parse_number<fmt,
+                        parse_number_result<offset + 1, fmt[offset] - '0'>>();
 
   if constexpr (status.mode == index_mode::automatic)
     return ctf::create_format_error(
-        "using a manual argument id while in automatic index mode",
-        std::string(fmt.text), offset, number.offset, number.offset);
+        "using a manual argument id while in automatic index mode", fmt, offset,
+        number.offset, number.offset);
   else {
     if constexpr (number.value == -1)
       return ctf::create_format_error(
           "the value of the argument index is larger than the implementation "
           "supports (2147483647)",
-          std::string(fmt.text), offset, number.offset, number.offset);
+          fmt, offset, number.offset, number.offset);
     else {
-      constexpr auto c = fmt.text[number.offset];
+      constexpr auto c = fmt[number.offset];
       if constexpr (c != ':' && c != '}')
         return parse_arg_id_result<
             number.offset, std::size_t(-1),
             arg_id_status<index_mode::manual, status.index, status.count>{}>{};
 
-      else if constexpr (fmt.text[offset] == '0' && number.offset != offset + 1)
+      else if constexpr (fmt[offset] == '0' && number.offset != offset + 1)
         return ctf::create_format_error(
-            "the argument index has a leading zero ", std::string(fmt.text),
-            offset, offset + 1, number.offset - 1);
+            "the argument index has a leading zero ", fmt, offset, offset + 1,
+            number.offset - 1);
 
       else if constexpr (number.value >= status.count)
         return create_format_error_arg_id_out_of_bounds(
-            std::string(fmt.text), number.value, status.count, offset,
-            number.offset);
+            fmt, number.value, status.count, offset, number.offset);
       else
         return parse_arg_id_result<
             number.offset, number.value,
@@ -206,10 +206,10 @@ template <fixed_string fmt, std::size_t offset, arg_id_status status>
 auto consteval parse_arg_id_automatic() {
   if constexpr (status.mode == index_mode::manual)
     return ctf::create_format_error(
-        "using a automatic argument id while in manual index mode",
-        std::string(fmt.text), offset - 1, offset, offset);
+        "using a automatic argument id while in manual index mode", fmt,
+        offset - 1, offset, offset);
   else {
-    constexpr auto c = fmt.text[offset];
+    constexpr auto c = fmt[offset];
     if constexpr (c != ':' && c != '}')
       return parse_arg_id_result<
           offset, std::size_t(-1),
@@ -217,8 +217,7 @@ auto consteval parse_arg_id_automatic() {
 
     else if constexpr (status.index >= status.count)
       return create_format_error_arg_id_out_of_bounds(
-          std::string(fmt.text), status.index, status.count, offset - 1,
-          offset);
+          fmt, status.index, status.count, offset - 1, offset);
     else
       return parse_arg_id_result<
           offset, status.index,
@@ -231,7 +230,7 @@ auto consteval parse_arg_id_automatic() {
 
 template <fixed_string fmt, std::size_t offset, arg_id_status status>
 auto consteval parse_arg_id() {
-  constexpr auto c = fmt.text[offset];
+  constexpr auto c = fmt[offset];
   using CharT = decltype(c);
   if constexpr (c >= CharT('0') && c <= CharT('9'))
     return detail::parse_arg_id_manual<fmt, offset, status>();
